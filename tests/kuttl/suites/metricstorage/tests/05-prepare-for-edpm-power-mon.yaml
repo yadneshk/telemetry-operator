@@ -1,0 +1,181 @@
+# Kuttl test doesn't seem to wait correctly for the metric
+# storage to reconcile in the next test step when switching
+# to CustomMonitoringStack (in the output of the test I
+# can see it applyes the resource and fails a second later).
+# Deleting it here and than recreating it in the next step
+# should ensure kuttl waits long enough.
+apiVersion: kuttl.dev/v1beta1
+kind: TestStep
+delete:
+  - apiVersion: telemetry.openstack.org/v1beta1
+    kind: MetricStorage
+    name: telemetry-kuttl
+commands:
+  - script: |
+      oc apply -f ../deps/rhobs.yaml
+      until oc api-resources | grep -q rhobs; do sleep 1; done
+  - script: oc apply -n telemetry-kuttl-tests -f https://raw.githubusercontent.com/openstack-k8s-operators/infra-operator/main/config/samples/network_v1beta1_netconfig.yaml
+  # - script: |
+  #     oc apply -n telemetry-kuttl-tests -f ../deps/dnsmasq.yaml
+  #     until oc get dnsmasq -n telemetry-kuttl-tests | grep True; do sleep 1; done
+  - script: |
+      oc create secret generic dataplanenodeset-openstack-edpm-ipam \
+        --save-config \
+        --dry-run=client \
+        --from-file=../deps/inventory \
+        -n telemetry-kuttl-tests \
+        -o yaml | oc apply -f -
+      oc label -n telemetry-kuttl-tests secret dataplanenodeset-openstack-edpm-ipam inventory="true" openstack.org/operator-name=dataplane openstackdataplanenodeset=openstack-edpm-ipam
+  # - script: oc apply -n telemetry-kuttl-tests -f https://raw.githubusercontent.com/openstack-k8s-operators/openstack-operator/refs/heads/main/config/crd/bases/dataplane.openstack.org_openstackdataplanenodesets.yaml
+  # - script: oc apply -n telemetry-kuttl-tests -f https://raw.githubusercontent.com/openstack-k8s-operators/openstack-operator/refs/heads/main/config/crd/bases/dataplane.openstack.org_openstackdataplanedeployments.yaml
+# ---
+# apiVersion: dataplane.openstack.org/v1beta1
+# kind: OpenStackDataPlaneNodeSet
+# metadata:
+#   name: openstack-edpm-ipam
+#   namespace: telemetry-kuttl-tests
+# spec:
+#   env:
+#     - name: ANSIBLE_FORCE_COLOR
+#       value: "True"
+#   services:
+#     - download-cache
+#     - bootstrap
+#     - configure-network
+#     - validate-network
+#     - install-os
+#     - configure-os
+#     - run-os
+#     - install-certs
+#     - ovn
+#     - neutron-metadata
+#     - libvirt
+#     - nova
+#     - telemetry
+#     - telemetry-power-monitoring
+#   tlsEnabled: true
+#   preProvisioned: true
+#   nodes:
+#     edpm-compute-0:
+#       hostName: edpm-compute-0
+#       networks:
+#       - name: ctlplane
+#         subnetName: subnet1
+#         defaultRoute: true
+#         fixedIP: 192.168.122.100
+#       - name: internalapi
+#         subnetName: subnet1
+#       - name: storage
+#         subnetName: subnet1
+#       - name: tenant
+#         subnetName: subnet1
+#   nodeTemplate:
+#     ansibleSSHPrivateKeySecret: dataplane-ansible-ssh-private-key-secret
+#     ansible:
+#       ansibleUser: cloud-admin
+#       ansiblePort: 22
+#       ansibleVarsFrom:
+#         - prefix: edpm_
+#           configMapRef:
+#             name: network-config-template
+#       ansibleVars:
+#          timesync_ntp_servers:
+#            - hostname: clock.redhat.com
+#          # edpm_network_config
+#          # Default nic config template for a EDPM compute node
+#          # These vars are edpm_network_config role vars
+#          edpm_network_config_hide_sensitive_logs: false
+#          edpm_nodes_validation_validate_controllers_icmp: false
+#          edpm_nodes_validation_validate_gateway_icmp: false
+#          gather_facts: false
+#          enable_debug: false
+#          # edpm firewall, change the allowed CIDR if needed
+#          edpm_sshd_configure_firewall: true
+#          edpm_sshd_allowed_ranges: ['192.168.122.0/24']
+#          # SELinux module
+#          edpm_selinux_mode: enforcing
+# status:
+#   allHostnames:
+#     edpm-compute-0:
+#       ctlplane: edpm-compute-0.ctlplane.example.com
+#       internalapi: edpm-compute-0.internalapi.example.com
+#       storage: edpm-compute-0.storage.example.com
+#       tenant: edpm-compute-0.tenant.example.com
+#   allIPs:
+#     edpm-compute-0:
+#       ctlplane: 192.168.122.100
+#       internalapi: 172.17.0.101
+#       storage: 172.18.0.101
+#       tenant: 172.19.0.101
+---
+apiVersion: network.openstack.org/v1beta1
+kind: IPSet
+metadata:
+  name: edpm-compute-0
+spec:
+  immutable: false
+  networks:
+  - defaultRoute: true
+    name: ctlplane
+    subnetName: subnet1
+  - name: internalapi
+    subnetName: subnet1
+  - name: storage
+    subnetName: subnet1
+  - name: tenant
+    subnetName: subnet1
+status:
+  conditions:
+  - message: Setup complete
+    reason: Ready
+    status: "True"
+    type: Ready
+  - message: Input data complete
+    reason: Ready
+    status: "True"
+    type: InputReady
+  - message: Reservation successful
+    reason: Ready
+    status: "True"
+    type: ReservationReady
+  reservations:
+  - address: 192.168.122.100
+    cidr: 192.168.122.0/24
+    dnsDomain: ctlplane.example.com
+    gateway: 192.168.122.1
+    mtu: 1500
+    network: ctlplane
+    routes:
+    - destination: 0.0.0.0/0
+      nexthop: 192.168.122.1
+    subnet: subnet1
+  - address: 172.17.0.100
+    cidr: 172.17.0.0/24
+    dnsDomain: internalapi.example.com
+    mtu: 1500
+    network: internalapi
+    subnet: subnet1
+    vlan: 20
+  - address: 172.18.0.100
+    cidr: 172.18.0.0/24
+    dnsDomain: storage.example.com
+    mtu: 1500
+    network: storage
+    subnet: subnet1
+    vlan: 21
+  - address: 172.19.0.100
+    cidr: 172.19.0.0/24
+    dnsDomain: tenant.example.com
+    mtu: 1500
+    network: tenant
+    subnet: subnet1
+    vlan: 22
+# ---
+# apiVersion: dataplane.openstack.org/v1beta1
+# kind: OpenStackDataPlaneDeployment
+# metadata:
+#   name: openstack-edpm
+#   namespace: telemetry-kuttl-tests
+# spec:
+#   nodeSets:
+#     - openstack-edpm-ipam
